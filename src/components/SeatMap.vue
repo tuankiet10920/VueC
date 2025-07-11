@@ -33,13 +33,19 @@
       <h3>Chatbot Hỗ trợ</h3>
       <div class="chat-messages" ref="chatMessagesContainer">
         <div v-for="(msg, index) in messages" :key="index" :class="['message-bubble', msg.sender]">
-          <p>{{ msg.text }}</p>
+          <!-- Conditional rendering for HTML content -->
+          <p v-if="msg.isHtml" v-html="msg.text"></p>
+          <p v-else>{{ msg.text }}</p>
+        </div>
+        <!-- Spinner will be displayed here when isTyping is true -->
+        <div v-if="isTyping" class="message-bubble bot typing-indicator">
+          <img src="http://127.0.0.1:5173/public/spinner.gif" alt="Typing..." class="spinner-gif" />
         </div>
       </div>
       <div class="chat-input-area">
         <input type="text" v-model="chatInput" @keyup.enter="sendMessage" placeholder="Nhập tin nhắn của bạn..."
-          class="chat-input" />
-        <button @click="sendMessage" class="send-button">Gửi</button>
+          class="chat-input" :disabled="isTyping" />
+        <button @click="sendMessage" class="send-button" :disabled="isTyping">Gửi</button>
       </div>
     </div>
     <!-- End Chatbot Section -->
@@ -51,31 +57,32 @@
 import { ref, onMounted, onUnmounted, getCurrentInstance, nextTick } from 'vue';
 import axios from 'axios';
 
-// Lấy instance hiện tại để truy cập các thuộc tính global được expose qua `app.config.globalProperties`
-// Đảm bảo bạn đã cấu hình Laravel Echo trong `main.js` hoặc `plugins/echo.js` và expose nó đúng cách.
-// Ví dụ trong main.js: `app.config.globalProperties.$echo = Echo;`
+// Get current instance to access global properties exposed via `app.config.globalProperties`
+// Ensure Laravel Echo is configured in `main.js` or `plugins/echo.js` and exposed correctly.
+// Example in main.js: `app.config.globalProperties.$echo = Echo;`
 const { proxy } = getCurrentInstance();
 const $echo = proxy.$echo;
 
-// Khai báo các Ref reactive
+// Declare reactive Refs
 const username = ref('Tài khoản khách');
 const message = ref('');
 const errorMessage = ref('');
-const countdownIntervals = {}; // Dùng để lưu trữ các setInterval cho countdown
+const countdownIntervals = {}; // Used to store setIntervals for countdown
 const currentUserId = ref(null);
 
-// Refs cho form đăng nhập
+// Refs for login form
 const loginEmail = ref('');
 const loginPassword = ref('');
 
-// Refs và logic cho Chatbot
+// Refs and logic for Chatbot
 const chatInput = ref('');
 const messages = ref([
-  { sender: 'bot', text: 'Chào bạn! Tôi có thể giúp gì cho bạn hôm nay?' }
+  { sender: 'bot', text: 'Chào bạn! Tôi có thể giúp gì cho bạn hôm nay?', isHtml: false } // Added isHtml property
 ]);
-const chatMessagesContainer = ref(null); // Ref để cuộn xuống cuối tin nhắn
+const chatMessagesContainer = ref(null); // Ref to scroll to the bottom of messages
+const isTyping = ref(false); // New reactive variable for spinner
 
-// Cấu hình các URL API
+// Configure API URLs
 const API_BASE_URL = 'http://127.0.0.1:8000/api/auth';
 const API_URL = 'http://127.0.0.1:8000/api';
 const API_HOLD_SEAT_URL = `${API_BASE_URL}/hold-seat`;
@@ -87,12 +94,12 @@ const API_LOGIN = `http://127.0.0.1:8000/api/login`;
 const API_LOGOUT = `${API_BASE_URL}/logout`;
 
 /**
- * Lấy thông tin người dùng hiện tại từ API.
+ * Get current user information from API.
  */
 const me = async () => {
   message.value = '';
   errorMessage.value = '';
-  console.log('--- Đang lấy thông tin người dùng (API_ME)... ---');
+  console.log('--- Fetching user information (API_ME)... ---');
 
   try {
     const response = await axios.get(API_ME, {
@@ -103,38 +110,38 @@ const me = async () => {
     });
 
     if (response.status >= 200 && response.status < 300) {
-      username.value = response.data.data.name || 'Người dùng đã đăng nhập';
+      username.value = response.data.data.name || 'Logged in user';
       currentUserId.value = response.data.data.id;
-      message.value = 'Đã tải thông tin người dùng thành công!';
-      console.log(`Người dùng hiện tại: ${username.value} (ID: ${currentUserId.value})`);
+      message.value = 'User information loaded successfully!';
+      console.log(`Current user: ${username.value} (ID: ${currentUserId.value})`);
 
-      // Sau khi có currentUserId, khởi tạo lại countdown cho các ghế đang được giữ
-      // (đảm bảo rằng nếu có ghế được giữ bởi người dùng hiện tại, countdown sẽ chạy)
+      // After having currentUserId, re-initialize countdown for held seats
+      // (ensure that if seats are held by the current user, countdown will run)
       // seatsData.value.forEach(seat => { // seatsData is not defined in this snippet, commenting out
       //   if (seat.status === 'held' && seat.heldUntil) {
-      //     // Chỉ khởi động lại countdown nếu ghế đang được giữ và có thời gian hết hạn
+      //     // Only restart countdown if seat is held and has an expiration time
       //     startCountdown(seat.id, seat.heldUntil);
       //   }
       // });
-      console.log('--- Lấy thông tin người dùng hoàn tất. ---');
+      console.log('--- User information fetching complete. ---');
     } else {
-      errorMessage.value = 'Phản hồi không mong muốn từ server khi lấy thông tin người dùng.';
+      errorMessage.value = 'Unexpected response from server when fetching user information.';
     }
   } catch (error) {
     if (error.response && error.response.status === 401) {
-      errorMessage.value = 'Bạn chưa đăng nhập hoặc phiên làm việc đã hết hạn. Vui lòng đăng nhập lại.';
-      username.value = 'Tài khoản khách';
+      errorMessage.value = 'You are not logged in or your session has expired. Please log in again.';
+      username.value = 'Guest Account';
       currentUserId.value = null;
-      console.log('Người dùng chưa đăng nhập hoặc token hết hạn.');
+      console.log('User not logged in or token expired.');
     } else {
-      errorMessage.value = error.response?.data?.message || 'Lỗi từ server khi lấy thông tin người dùng.';
+      errorMessage.value = error.response?.data?.message || 'Server error when fetching user information.';
     }
-    console.error('Lỗi API /me:', error);
+    console.error('API /me error:', error);
   }
 };
 
 /**
- * Xử lý đăng nhập người dùng.
+ * Handle user login.
  */
 const performLogin = async () => {
   const email = loginEmail.value;
@@ -144,11 +151,11 @@ const performLogin = async () => {
   errorMessage.value = '';
 
   if (!email || !password) {
-    errorMessage.value = 'Vui lòng nhập cả email và mật khẩu.';
+    errorMessage.value = 'Please enter both email and password.';
     return;
   }
 
-  console.log('--- Đang thực hiện đăng nhập... ---');
+  console.log('--- Performing login... ---');
   try {
     const response = await axios.post(API_LOGIN, {
       email: email,
@@ -162,27 +169,27 @@ const performLogin = async () => {
     });
 
     if (response.status >= 200 && response.status < 300) {
-      message.value = 'Đăng nhập thành công!';
-      console.log('Đăng nhập thành công, đang cập nhật thông tin người dùng...');
-      await me(); // Cập nhật thông tin người dùng và ID sau khi đăng nhập
+      message.value = 'Login successful!';
+      console.log('Login successful, updating user information...');
+      await me(); // Update user information and ID after login
       loginEmail.value = '';
       loginPassword.value = '';
     } else {
-      throw new Error(response.data.message || 'Đăng nhập không thành công.');
+      throw new Error(response.data.message || 'Login failed.');
     }
   } catch (error) {
-    errorMessage.value = error.response?.data?.message || 'Lỗi đăng nhập từ server.';
-    console.error('Lỗi đăng nhập:', error.response?.data || error.message);
+    errorMessage.value = error.response?.data?.message || 'Server login error.';
+    console.error('Login error:', error.response?.data || error.message);
   }
 };
 
 /**
- * Xử lý đăng xuất người dùng.
+ * Handle user logout.
  */
 const handleLogout = async () => {
   message.value = '';
   errorMessage.value = '';
-  console.log('--- Đang thực hiện đăng xuất... ---');
+  console.log('--- Performing logout... ---');
 
   try {
     const response = await axios.post(API_LOGOUT, {}, {
@@ -193,41 +200,53 @@ const handleLogout = async () => {
     });
 
     if (response.status >= 200 && response.status < 300) {
-      message.value = 'Đăng xuất thành công!';
-      username.value = 'Tài khoản khách';
-      // Lưu lại ID người dùng trước khi xóa để xử lý ghế nếu cần
+      message.value = 'Logout successful!';
+      username.value = 'Guest Account';
+      // Save old user ID before clearing to handle seats if necessary
       const oldUserId = currentUserId.value;
       currentUserId.value = null;
 
-      console.log('Đăng xuất thành công. Đang cập nhật trạng thái ghế của người dùng cũ.');
-      // Reset trạng thái các ghế đang được giữ bởi người dùng này về available
-      // Dù backend có thể gửi sự kiện, việc này giúp UI phản ứng nhanh hơn
+      console.log('Logout successful. Updating seat status for old user.');
+      // Reset status of seats held by this user to available
+      // Although backend might send events, this helps UI react faster
       // seatsData.value.forEach(seat => { // seatsData is not defined in this snippet, commenting out
       //   if (seat.status === 'held' && seat.heldBy === oldUserId) {
       //     updateSeatStatus(seat.id, 'available', null, null);
       //   }
       // });
-      // Tùy chọn: loadSeats() nếu muốn đảm bảo đồng bộ hoàn toàn với backend sau logout
+      // Optional: loadSeats() if you want to ensure full synchronization with backend after logout
       // loadSeats();
     } else {
-      throw new Error(response.data.message || 'Đăng xuất không thành công.');
+      throw new Error(response.data.message || 'Logout failed.');
     }
   } catch (error) {
-    errorMessage.value = error.response?.data?.message || 'Lỗi đăng xuất từ server.';
-    console.error('Lỗi đăng xuất:', error.response?.data || error.message);
+    errorMessage.value = error.response?.data?.message || 'Server logout error.';
+    console.error('Logout error:', error.response?.data || error.message);
   }
 };
 
 /**
- * Gửi tin nhắn trong chatbot. (Placeholder for actual LLM integration)
+ * Play notification sound.
+ */
+const playNotificationSound = () => {
+  const audio = new Audio('noti.mp3'); // Replace with your MP3 file URL
+  audio.play().catch(e => console.error("Error playing sound:", e));
+};
+
+/**
+ * Send message in chatbot.
+ * Updated to send cookies by adding `credentials: 'include'` to fetch options.
+ * Also, changed payload to match your chatbox API (only sends messageInput and option).
  */
 const sendMessage = async () => {
   if (chatInput.value.trim() === '') return;
 
   const messageInput = chatInput.value;
-  messages.value.push({ sender: 'user', text: chatInput.value });
-  const userMessage = chatInput.value;
+  messages.value.push({ sender: 'user', text: chatInput.value, isHtml: false }); // User messages are always plain text
   chatInput.value = '';
+
+  // Set typing indicator to true
+  isTyping.value = true;
 
   // Scroll to the bottom after adding a new message
   await nextTick();
@@ -235,56 +254,71 @@ const sendMessage = async () => {
     chatMessagesContainer.value.scrollTop = chatMessagesContainer.value.scrollHeight;
   }
 
-  // Simulate a bot response (replace with actual LLM API call)
-  messages.value.push({ sender: 'bot', text: 'Tôi đang xử lý yêu cầu của bạn...' });
-  await nextTick();
-  if (chatMessagesContainer.value) {
-    chatMessagesContainer.value.scrollTop = chatMessagesContainer.value.scrollHeight;
-  }
-
-  // Placeholder for LLM API call
+  // Actual API call to your backend chatbox
   try {
-    const prompt = userMessage;
-    let chatHistory = [];
-    chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+    // Payload for your Laravel backend's /api/chatbox endpoint
     const payload = {
       message: messageInput,
-      option: null
+      option: null // Assuming 'option' can be null if not used for simple messages
     };
     const apiUrl = `http://127.0.0.1:8000/api/chatbox`;
 
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
+      credentials: 'include', // Ensure cookies are sent
       body: JSON.stringify(payload)
     });
-    const result = await response.json();
 
+    const result = await response.json();
     console.log(result);
 
+    // Check response from your backend
+    if (response.ok) { // Check if response is successful (status 2xx)
+      const botResponseText = result.data.answer || 'No response from bot.';
+      let renderedText = botResponseText;
+      let isContentHtml = false;
 
-    if (result.error == false) {
-      const botResponseText = result.data.answer;
-      // Replace the "processing" message with the actual bot response
-      messages.value[messages.value.length - 1] = { sender: 'bot', text: botResponseText };
+      // Regex to detect markdown HTML block: ```html ... ```
+      // This regex is now more robust to handle potential leading/trailing newlines
+      const htmlBlockRegex = /^```html\s*([\s\S]*?)\s*```$/;
+      const match = botResponseText.match(htmlBlockRegex);
+
+      if (match && match[1]) {
+        // Trim any whitespace including newlines from the extracted content
+        renderedText = match[1].trim();
+        isContentHtml = true;
+      }
+
+      messages.value.push({ sender: 'bot', text: renderedText, isHtml: isContentHtml }); // Push the actual bot message
+      playNotificationSound(); // Play sound on successful response
+    } else if (response.status === 302) {
+      // Handle redirect specifically, e.g., if it redirects to login
+      messages.value.push({ sender: 'bot', text: 'Session expired or you are not logged in. Please log in again.', isHtml: false });
+      console.error('Redirected to login:', result);
     } else {
-      messages.value[messages.value.length - 1] = { sender: 'bot', text: 'Xin lỗi, tôi không thể tạo phản hồi lúc này.' };
+      // Handle other errors from backend
+      const errorData = result.message || 'Unknown error from server.';
+      messages.value.push({ sender: 'bot', text: `Error: ${errorData}`, isHtml: false });
+      console.error('Server response error:', result);
     }
-  } catch (error) {
-    console.error('Error calling Gemini API:', error);
-    messages.value[messages.value.length - 1] = { sender: 'bot', text: 'Đã xảy ra lỗi khi kết nối với dịch vụ AI.' };
-  }
 
-  await nextTick();
-  if (chatMessagesContainer.value) {
-    chatMessagesContainer.value.scrollTop = chatMessagesContainer.value.scrollHeight;
+  } catch (error) {
+    console.error('Error calling chatbox API:', error);
+    messages.value.push({ sender: 'bot', text: 'An error occurred while connecting to the chatbox service.', isHtml: false });
+  } finally {
+    // Always set typing indicator to false after response or error
+    isTyping.value = false;
+    await nextTick();
+    if (chatMessagesContainer.value) {
+      chatMessagesContainer.value.scrollTop = chatMessagesContainer.value.scrollHeight;
+    }
   }
 };
 
 
 onMounted(async () => {
-  await me(); // Lấy thông tin người dùng khi component được mount
+  await me(); // Get user information when component is mounted
 });
 
 onUnmounted(() => {
@@ -298,7 +332,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* (Giữ nguyên phần CSS của bạn) */
+/* (Keep your existing CSS) */
 .seat-map-container {
   font-family: 'Inter', Arial, sans-serif;
   /* Changed font to Inter */
@@ -393,15 +427,6 @@ h3 {
   color: #d32f2f;
   text-align: left;
   border-radius: 4px;
-}
-
-.spinner-gif {
-  width: 50px;
-  height: 50px;
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
 }
 
 /* AUTH SECTION STYLES */
@@ -563,6 +588,22 @@ h3 {
   /* Sharpen corner on receive side */
 }
 
+.typing-indicator {
+  padding: 5px 15px;
+  /* Adjust padding for spinner */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spinner-gif {
+  width: 30px;
+  /* Adjusted size for the spinner */
+  height: 30px;
+  /* Adjusted size for the spinner */
+  /* No need for absolute positioning here, as it's part of the flow */
+}
+
 .chat-input-area {
   display: flex;
   gap: 10px;
@@ -633,6 +674,12 @@ h3 {
     max-width: 85%;
     /* Allow messages to take more width on small screens */
     padding: 8px 12px;
+  }
+
+  .spinner-gif {
+    width: 25px;
+    /* Smaller spinner on small screens */
+    height: 25px;
   }
 }
 </style>
